@@ -74,8 +74,8 @@ def fetch_premier_league_matches(season):
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
     querystring = {"league":"39", "season":str(season)}
     headers = {
-        "X-RapidAPI-Key": "f6f92a0551msh8a9ff5ec6a49f33p1f8d7djsn8c257e0489d6",
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "X-RapidAPI-Key": "xxxx",
+        "X-RapidAPI-Host": "xxxxx"
     }
     response = requests.get(url, headers=headers, params=querystring)
     if response.status_code == 200:
@@ -87,8 +87,8 @@ def fetch_fixture_statistics(fixture_id):
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures/statistics"
     querystring = {"fixture": str(fixture_id)}
     headers = {
-        "X-RapidAPI-Key": "f6f92a0551msh8a9ff5ec6a49f33p1f8d7djsn8c257e0489d6",  
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "X-RapidAPI-Key": "xxxxx",  
+        "X-RapidAPI-Host": "xxxxx"
     }
     response = requests.get(url, headers=headers, params=querystring)
     if response.status_code == 200:
