@@ -53,191 +53,131 @@
 # - data['fatigue_factor'] = data['matches_played_last_month'] / 30
 # 
 
-# First we employ the requests library to obtain Premier League match data from API-Foootball.
-
-# In[81]:
-
-
 import requests
 import pandas as pd
-from pandas import json_normalize
+import numpy as np
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
 
-
-# For the sake of modularity, we define two functions that fetch seasonal match data and fetch the specific match data, "fetch_premier_league_matches" and "fetch_fixture_statistics", respectively.
-# 
-# Terminology alert! In football, "Fixture" refers to the matches that has been played/yet to be played by a team.
-
-# In[ ]:
-
-
-def fetch_premier_league_matches(season):
-    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
-    querystring = {"league":"39", "season":str(season)}
+# Define functions to fetch data from Bet365 API
+def fetch_data(api_key, endpoint):
+    url = f"https://api.b365api.com/v1/{endpoint}"
     headers = {
-        "X-RapidAPI-Key": "xxxx",
-        "X-RapidAPI-Host": "xxxxx"
+        "Authorization": f"Bearer {api_key}"
     }
-    response = requests.get(url, headers=headers, params=querystring)
-    if response.status_code == 200:
-        return response.json()
-    else:
-        return None
-    
-def fetch_fixture_statistics(fixture_id):
-    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures/statistics"
-    querystring = {"fixture": str(fixture_id)}
-    headers = {
-        "X-RapidAPI-Key": "xxxxx",  
-        "X-RapidAPI-Host": "xxxxx"
-    }
-    response = requests.get(url, headers=headers, params=querystring)
+    response = requests.get(url, headers=headers)
     if response.status_code == 200:
         return response.json()
     else:
         return None
 
+def fetch_premier_league_matches(api_key, season):
+    endpoint = f"soccer/matches?league=39&season={season}"
+    return fetch_data(api_key, endpoint)
 
-# In[120]:
+def fetch_fixture_statistics(api_key, fixture_id):
+    endpoint = f"soccer/fixtures/statistics?fixture={fixture_id}"
+    return fetch_data(api_key, endpoint)
 
+# Calculate team form from recent 5 matches
+def calculate_form_from_recent_5_matches(recent_matches):
+    form_score = 0
+    for match in recent_matches:
+        if match == 'W':
+            form_score += 3
+        elif match == 'D':
+            form_score += 1
+    return form_score
 
+# Fetch match data for multiple seasons and combine into a single DataFrame
+api_key = 'xxxxx'
 all_matches = []
-for year in range(2010, 2023):  
-    season_data = fetch_premier_league_matches(year)
-    flattened_data = json_normalize(season_data['response'], sep='_')
-    all_matches.extend(flattened_data.to_dict(orient='records'))
+for year in range(2010, 2023):
+    season_data = fetch_premier_league_matches(api_key, year)
+    if season_data:
+        flattened_data = pd.json_normalize(season_data['data'])
+        all_matches.extend(flattened_data.to_dict(orient='records'))
 
 matches_df = pd.DataFrame(all_matches)
 
+# Sort matches by date
 matches_df.sort_values(by='fixture_date', inplace=True)
-
 matches_df.reset_index(drop=True, inplace=True)
 
-print(matches_df)
-
-
-# In[114]:
-
-
-matches_df.columns
-
-
-# Now we look at each row in the 'matches_df' dataframe by the 'fixture_id', to call the function 'fetch_fixture_statistics' and add the information about the matches that we want into the 'matches_df'.
-
-# In[117]:
-
-
+# Define the statistics to fetch for each fixture
 statistic_types = [
-    "Shots on Goal",
-    "Shots off Goal",
-    "Total Shots",
-    "Blocked Shots",
-    "Shots insidebox",
-    "Shots outsidebox",
-    "Fouls",
-    "Corner Kicks",
-    "Offsides",
-    "Ball Possession",
-    "Yellow Cards",
-    "Red Cards",
-    "Goalkeeper Saves",
-    "Total passes",
-    "Passes accurate",
-    "Passes %",
+    "Shots on Goal", "Shots off Goal", "Total Shots", "Blocked Shots",
+    "Shots insidebox", "Shots outsidebox", "Fouls", "Corner Kicks",
+    "Offsides", "Ball Possession", "Yellow Cards", "Red Cards",
+    "Goalkeeper Saves", "Total passes", "Passes accurate", "Passes %",
     "Expected Goals"
 ]
 
-
-# In[118]:
-
-
-for stat_type in statistic_types:
-    matches_df[stat_type] = None
-
-
-# In[121]:
-
-
-matches_df
-
-
-# In[122]:
-
-
-statistic_types = [
-    "Shots on Goal",
-    "Shots off Goal",
-    "Total Shots",
-    "Blocked Shots",
-    "Shots insidebox",
-    "Shots outsidebox",
-    "Fouls",
-    "Corner Kicks",
-    "Offsides",
-    "Ball Possession",
-    "Yellow Cards",
-    "Red Cards",
-    "Goalkeeper Saves",
-    "Total passes",
-    "Passes accurate",
-    "Passes %",
-    "Expected Goals"
-]
-
-# new list with 'home_' and 'away_' prefixes
+# Create columns for each statistic for both home and away teams
 modified_statistic_types = [
     f"home_{stat.replace(' ', '_').lower()}" for stat in statistic_types
 ] + [
     f"away_{stat.replace(' ', '_').lower()}" for stat in statistic_types
 ]
 
-print(modified_statistic_types)
-
-
-# In[123]:
-
-
-modified_statistic_types
-
-
-# In[124]:
-
-
 for stat_type in modified_statistic_types:
     matches_df[stat_type] = None
 
-
-# In[125]:
-
-
-matches_df
-
-
-# In[ ]:
-
-
+# Populate match statistics into the DataFrame
 def populate_statistics(row):
-    fixture_statistics = fetch_fixture_statistics(row['fixture_id'])
-
+    fixture_statistics = fetch_fixture_statistics(api_key, row['fixture_id'])
     if fixture_statistics and 'response' in fixture_statistics and len(fixture_statistics['response']) == 2:
-        # Check if the response has two items (home and away team data)
-
-        # Processing home team statistics
         for stat in fixture_statistics['response'][0]['statistics']:
             column_name = 'home_' + stat['type'].lower().replace(' ', '_')
             row[column_name] = stat['value']
-
-        # Processing away team statistics
         for stat in fixture_statistics['response'][1]['statistics']:
             column_name = 'away_' + stat['type'].lower().replace(' ', '_')
             row[column_name] = stat['value']
     else:
-        # Handle the case where fixture data is incomplete or not available
         print(f"Data for fixture {row['fixture_id']} is incomplete or not available")
-
     return row
 
-# Apply the function to each row of matches_df
 matches_df = matches_df.apply(populate_statistics, axis=1)
 
-print(matches_df.head())
+# Feature Engineering
+matches_df['goal_conversion_rate'] = matches_df['goals_scored'] / matches_df['shots_on_target']
+matches_df['defense_strength'] = matches_df['fouls_committed'] + (matches_df['yellow_cards'] * 2) + (matches_df['red_cards'] * 3)
+matches_df['attacking_dominance'] = (matches_df['possession_percentage'] * matches_df['shots_on_target']) / 100
+matches_df['pressure_index'] = (matches_df['corners'] + matches_df['shots_on_target']) / matches_df['total_shots']
+matches_df['team_form'] = matches_df['recent_matches'].apply(lambda x: calculate_form_from_recent_5_matches(x))
+matches_df['fatigue_factor'] = matches_df['matches_played_last_month'] / 30
 
+# Save df
+matches_df.to_csv('premier_league_matches_with_statistics.csv', index=False)
+
+# Define features and target variable
+features = ['goal_conversion_rate', 'defense_strength', 'attacking_dominance', 'pressure_index', 'team_form', 'fatigue_factor']
+X = matches_df[features]
+y = matches_df['match_result']
+
+# Split the data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Logistic Regression Model
+log_reg = LogisticRegression()
+log_reg.fit(X_train, y_train)
+y_pred_log_reg = log_reg.predict(X_test)
+log_reg_accuracy = accuracy_score(y_test, y_pred_log_reg)
+print(f"Logistic Regression Accuracy: {log_reg_accuracy * 100:.2f}%")
+
+# Random Forest Classifier
+rf_clf = RandomForestClassifier(n_estimators=100, random_state=42)
+rf_clf.fit(X_train, y_train)
+y_pred_rf = rf_clf.predict(X_test)
+rf_accuracy = accuracy_score(y_test, y_pred_rf)
+print(f"Random Forest Accuracy: {rf_accuracy * 100:.2f}%")
+
+# Cross-validation for Logistic Regression
+log_reg_cv_scores = cross_val_score(log_reg, X, y, cv=5)
+print(f"Logistic Regression Cross-Validation Accuracy: {np.mean(log_reg_cv_scores) * 100:.2f}%")
+
+# Cross-validation for Random Forest
+rf_cv_scores = cross_val_score(rf_clf, X, y, cv=5)
+print(f"Random Forest Cross-Validation Accuracy: {np.mean(rf_cv_scores) * 100:.2f}%")
